@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Resume Screening — Interactive Demo</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--ink:#1c2333;--mut:#667085;--line:#e4e7ee;--pri:#2f4b7c;--pri2:#e9eef8;--ok:#1a7f4b;--warn:#b25e09;--bad:#b42318}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--pri);color:#fff;padding:18px 20px}
+header h1{margin:0;font-size:20px}
+header p{margin:4px 0 0;opacity:.85;font-size:13.5px}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}
+.note{background:#fff8e6;border:1px solid #f1d58a;border-radius:8px;padding:10px 12px;font-size:13px;color:#6b4e00;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2{margin:0 0 8px;font-size:15px}
+textarea{width:100%;font:13px/1.45 ui-monospace,Consolas,monospace;border:1px solid var(--line);border-radius:8px;padding:8px;resize:vertical;background:#fcfcfd;color:var(--ink)}
+button{font:inherit;cursor:pointer;border:1px solid var(--pri);background:var(--pri);color:#fff;border-radius:8px;padding:7px 14px}
+button.sec{background:#fff;color:var(--pri)}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cand{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px}
+.cand .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.cand small{color:var(--mut)}
+.weights{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+@media(max-width:640px){.weights{grid-template-columns:1fr 1fr}}
+.weights label{font-size:12.5px;color:var(--mut);display:block}
+.weights input{width:100%}
+.weights b{color:var(--ink)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+tr.sel{background:var(--pri2)}
+tr.cl{cursor:pointer}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;min-width:60px}
+.bar i{display:block;height:100%;background:var(--pri)}
+.score{font-weight:700;font-size:16px}
+.chip{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;margin:2px 3px 2px 0;border:1px solid var(--line)}
+.chip.ok{background:#e8f6ee;color:var(--ok);border-color:#bfe5cf}
+.chip.miss{background:#fdecea;color:var(--bad);border-color:#f5c2bd}
+.factor{border-top:1px solid var(--line);padding:8px 0}
+.factor .h{display:flex;justify-content:space-between;font-weight:600}
+.factor ul{margin:4px 0 0 18px;padding:0;color:var(--mut);font-size:13px}
+.out{white-space:pre-wrap;font-size:14px;background:#fcfcfd;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:60px}
+.caret::after{content:"▍";animation:b 1s steps(1) infinite}
+@keyframes b{50%{opacity:0}}
+.mut{color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Resume Screening System — Interactive Demo</h1>
+  <p>Explainable ranking: every sub-score carries evidence from the resume. Edit anything below and re-run.</p>
+</header>
+<div class="wrap">
+  <div class="note"><b>About this demo:</b> it runs entirely in your browser with fictional candidates. In the real system an LLM parses PDF/DOCX resumes and embeddings live in PostgreSQL + pgvector; here a rule-based parser and TF-IDF similarity stand in for those steps. <b>The five-factor scoring, weighting, ranking and evidence trail are the real logic</b> — change the job description, resumes or weights and the ranking updates deterministically.</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>1 · Job description</h2>
+      <textarea id="jd" rows="9"></textarea>
+      <div class="mut" style="margin-top:6px">Required skills are extracted from this text using a skill taxonomy with aliases (e.g. “k8s” → Kubernetes).</div>
+    </div>
+    <div class="card">
+      <h2>2 · Candidates <small class="mut">(first line = name)</small></h2>
+      <div id="cands"></div>
+      <div class="row"><button class="sec" id="add">+ Add candidate</button></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>3 · Scoring weights <small class="mut">— deterministic five-factor score (weights are normalised)</small></h2>
+    <div class="weights" id="weights"></div>
+    <div class="row" style="margin-top:12px"><button id="run">Screen &amp; rank candidates</button><span class="mut" id="status"></span></div>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div class="card" id="rankcard" style="display:none">
+      <h2>Ranking</h2>
+      <table><thead><tr><th>#</th><th>Candidate</th><th>Score</th><th></th></tr></thead><tbody id="rank"></tbody></table>
+    </div>
+    <div class="card" id="detail" style="display:none">
+      <h2 id="dname"></h2>
+      <div id="dskills"></div>
+      <div id="dfactors"></div>
+      <div class="row" style="margin-top:10px"><button id="gen">Run interview agent</button><span class="mut">Streams tailored questions, as the SSE agent does.</span></div>
+      <div class="out" id="iv" style="margin-top:8px;display:none"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- sample data (fictional) ---------- */
+const JD_DEFAULT = `Senior AI Engineer — LLM Applications
+We are hiring an engineer to build RAG and agent services for enterprise HR workflows.
+Required: Python, FastAPI, LangChain or LangGraph, RAG, PostgreSQL with pgvector, Docker, AWS.
+Nice to have: evaluation (Ragas), CI/CD with GitHub Actions, React or Next.js.
+Minimum 4 years of professional experience. Bachelor's degree or higher in Computer Science or a related field.
+You will design retrieval pipelines, evaluate LLM output quality and ship services to production.`;
+
+const SAMPLES = [
+`Priya Nair
+Senior ML Engineer
+Experience: 2019 - Present
+- Built RAG pipelines with LangChain and pgvector on PostgreSQL serving 40k queries/day
+- Shipped FastAPI services in Docker on AWS (Lambda, ECS); cut p95 latency by 38%
+- Added Ragas evaluation and GitHub Actions CI/CD, reducing hallucination rate by 22%
+- Python, SQL, pytorch, scikit-learn
+Education: M.S. Computer Science, 2018`,
+`Daniel Okafor
+Backend Developer
+Experience: 2021 - 2024
+- Developed REST APIs in Python and FastAPI, deployed with Docker
+- Maintained PostgreSQL schemas and SQL reporting; improved query time by 3x
+- Built a prototype chatbot with LangChain and OpenAI
+- React dashboards in TypeScript
+Education: B.Sc. Software Engineering`,
+`Mei Tanaka
+Data Analyst
+Experience: 2023 - 2024
+- Created weekly reports in SQL and Excel for the sales team
+- Trained a simple scikit-learn classifier for churn
+- Learning Python and pandas
+Education: Bachelor of Commerce`
+];
+
+/* ---------- parsing & scoring (the real logic) ---------- */
+const SKILLS = {
+  "python":["python"],"fastapi":["fastapi"],"langchain":["langchain"],"langgraph":["langgraph"],
+  "rag":["rag","retrieval augmented generation","retrieval-augmented generation"],
+  "postgresql":["postgresql","postgres"],"pgvector":["pgvector"],"sql":["sql"],
+  "docker":["docker"],"kubernetes":["kubernetes","k8s"],"aws":["aws","amazon web services"],
+  "pytorch":["pytorch"],"scikit-learn":["scikit-learn","scikit learn","sklearn"],"pandas":["pandas"],
+  "react":["react"],"next.js":["next.js","nextjs"],"typescript":["typescript"],"javascript":["javascript"],
+  "llm":["llm","llms","large language model","large language models"],
+  "ragas":["ragas"],"github actions":["github actions","gh actions"],"ci/cd":["ci/cd","cicd"],
+  "terraform":["terraform"],"spark":["spark","pyspark"],"airflow":["airflow"],"redis":["redis"],"mlflow":["mlflow"]
+};
+const GROUP_OR = [["langchain","langgraph"],["react","next.js"]]; // "X or Y" satisfied by either
+const STOP = new Set("a an the and or of to in for with on at by is are be as we you will our your this that from it its into per not no than then".split(" "));
+
+function esc(s){return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function hasTerm(text,term){
+  const re=new RegExp("(^|[^a-z0-9+#.])"+term.replace(/[.*+?^${}()|[\]\\\/]/g,"\\$&")+"($|[^a-z0-9+#])","i");
+  return re.test(text);
+}
+function extractSkills(text){
+  return Object.keys(SKILLS).filter(k=>SKILLS[k].some(a=>hasTerm(text,a)));
+}
+function splitJD(jd){
+  const lines=jd.split("\n");
+  const req=lines.filter(l=>/required|must|minimum/i.test(l)&&!/nice to have/i.test(l)).join(" ");
+  const nice=lines.filter(l=>/nice to have|preferred|bonus/i.test(l)).join(" ");
+  const required=extractSkills(req||jd);
+  const nicer=extractSkills(nice).filter(s=>!required.includes(s));
+  return {required,nice:nicer};
+}
+function requiredYears(jd){const m=jd.match(/(\d+)\s*\+?\s*years/i);return m?+m[1]:3}
+const NOW=new Date().getFullYear();
+function parseExperience(text){
+  const ranges=[...text.matchAll(/(20\d\d|19\d\d)\s*[-–—]\s*(20\d\d|19\d\d|present|current)/gi)]
+    .map(m=>[+m[1],/present|current/i.test(m[2])?NOW:+m[2]]);
+  if(ranges.length){
+    const s=Math.min(...ranges.map(r=>r[0])),e=Math.max(...ranges.map(r=>r[1]));
+    return {years:Math.max(0,e-s),evidence:`Date range ${s}–${e===NOW?"present":e}`};
+  }
+  const m=text.match(/(\d+)\s*\+?\s*years/i);
+  return m?{years:+m[1],evidence:`States “${m[0]}”`}:{years:0,evidence:"No dates or years found"};
+}
+function parseEducation(text){
+  if(/ph\.?\s?d|doctorate/i.test(text))return {lvl:1,label:"Doctorate"};
+  if(/\bm\.?s\.?c?\b|master/i.test(text))return {lvl:.85,label:"Master's"};
+  if(/\bb\.?\s?(sc|tech|e|a)\b|bachelor/i.test(text))return {lvl:.7,label:"Bachelor's"};
+  if(/diploma/i.test(text))return {lvl:.4,label:"Diploma"};
+  return {lvl:.2,label:"Not stated"};
+}
+function tokens(t){return t.toLowerCase().replace(/[^a-z0-9+#. ]/g," ").split(/\s+/).filter(w=>w.length>2&&!STOP.has(w))}
+function tfidfCosines(jd,docs){
+  const all=[jd,...docs].map(tokens),N=all.length,df={};
+  all.forEach(d=>new Set(d).forEach(w=>df[w]=(df[w]||0)+1));
+  const vec=d=>{const tf={};d.forEach(w=>tf[w]=(tf[w]||0)+1);const v={};for(const w in tf)v[w]=tf[w]*(Math.log((N+1)/(df[w]+1))+1);return v};
+  const vs=all.map(vec),norm=v=>Math.sqrt(Object.values(v).reduce((a,x)=>a+x*x,0))||1;
+  const cos=(a,b)=>{let s=0;for(const w in a)if(b[w])s+=a[w]*b[w];return s/(norm(a)*norm(b))};
+  return vs.slice(1).map(v=>cos(vs[0],v));
+}
+function impactLines(text){
+  return text.split("\n").filter(l=>/\d+(\.\d+)?\s*(%|x\b|k\b|ms\b|\+)|\b\d{2,}\s*(queries|users|requests)/i.test(l)&&/^[-•*]/.test(l.trim())).map(l=>l.replace(/^[-•*]\s*/,"").trim());
+}
+
+const FACTORS=[
+  {id:"skills",label:"Skills match",w:35},
+  {id:"exp",label:"Experience",w:25},
+  {id:"sem",label:"Role relevance",w:20},
+  {id:"edu",label:"Education",w:10},
+  {id:"impact",label:"Quantified impact",w:10}
+];
+
+function screen(jd,resumes,weights){
+  const {required,nice}=splitJD(jd),reqY=requiredYears(jd);
+  const cos=tfidfCosines(jd,resumes);
+  const wsum=Object.values(weights).reduce((a,b)=>a+b,0)||1;
+  return resumes.map((text,i)=>{
+    const name=text.trim().split("\n")[0].trim()||`Candidate ${i+1}`;
+    const have=extractSkills(text);
+    // required skill is met if present, or if its "A or B" group partner is present
+    const met=required.filter(s=>have.includes(s)||GROUP_OR.some(g=>g.includes(s)&&g.some(x=>have.includes(x))));
+    const missing=required.filter(s=>!met.includes(s));
+    const niceMet=nice.filter(s=>have.includes(s));
+    const skillScore=required.length?(met.length+0.5*niceMet.length*(1-met.length/required.length))/required.length:0.5;
+    const exp=parseExperience(text);
+    const expScore=Math.min(1,exp.years/reqY);
+    const semScore=Math.min(1,cos[i]*2.5);
+    const edu=parseEducation(text);
+    const imp=impactLines(text);
+    const impScore=Math.min(1,imp.length/3);
+    const sub={
+      skills:{score:Math.min(1,skillScore),ev:[`Matched ${met.length}/${required.length} required: ${met.join(", ")||"none"}`,missing.length?`Missing: ${missing.join(", ")}`:"No required skills missing",niceMet.length?`Nice-to-have found: ${niceMet.join(", ")}`:"No nice-to-have skills found"]},
+      exp:{score:expScore,ev:[`${exp.years} yrs vs ${reqY} required`,exp.evidence]},
+      sem:{score:semScore,ev:[`TF-IDF cosine similarity to job description = ${cos[i].toFixed(2)} (scaled ×2.5, capped at 1)`]},
+      edu:{score:edu.lvl,ev:[`Detected level: ${edu.label}`]},
+      impact:{score:impScore,ev:imp.length?imp.slice(0,3).map(l=>`“${l}”`):["No quantified achievements found"]}
+    };
+    let total=0;for(const f of FACTORS)total+=sub[f.id].score*weights[f.id]/wsum;
+    return {name,total:total*100,sub,met,missing,niceMet,required,exp};
+  });
+}
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+let results=[],selected=0,streaming=null;
+
+function renderCands(list){
+  $("cands").innerHTML=list.map((t,i)=>`<div class="cand"><div class="top"><small>Candidate ${i+1}</small><button class="sec" data-rm="${i}" style="padding:2px 10px">remove</button></div><textarea rows="6" data-i="${i}">${esc(t)}</textarea></div>`).join("");
+  document.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{const l=readCands();l.splice(+b.dataset.rm,1);renderCands(l)});
+}
+function readCands(){return [...document.querySelectorAll("#cands textarea")].map(t=>t.value)}
+function readWeights(){const w={};FACTORS.forEach(f=>w[f.id]=+$("w_"+f.id).value);return w}
+function renderWeights(){
+  $("weights").innerHTML=FACTORS.map(f=>`<div><label>${f.label}: <b id="wv_${f.id}">${f.w}</b></label><input type="range" min="0" max="60" value="${f.w}" id="w_${f.id}"></div>`).join("");
+  FACTORS.forEach(f=>$("w_"+f.id).oninput=e=>{$("wv_"+f.id).textContent=e.target.value;if(results.length)run(true)});
+}
+function run(keepSel){
+  const resumes=readCands().filter(t=>t.trim());
+  if(!resumes.length){$("status").textContent="Add at least one candidate.";return}
+  results=screen($("jd").value,resumes,readWeights());
+  const order=results.map((r,i)=>i).sort((a,b)=>results[b].total-results[a].total);
+  const topIdx=order[0];
+  if(!keepSel||selected>=results.length)selected=topIdx;
+  $("rankcard").style.display=$("detail").style.display="";
+  $("rank").innerHTML=order.map((ix,pos)=>{const r=results[ix];return `<tr class="cl ${ix===selected?"sel":""}" data-ix="${ix}"><td>${pos+1}</td><td>${esc(r.name)}</td><td><div class="score">${r.total.toFixed(1)}</div></td><td style="width:35%"><div class="bar"><i style="width:${r.total}%"></i></div></td></tr>`}).join("");
+  document.querySelectorAll("#rank tr").forEach(tr=>tr.onclick=()=>{selected=+tr.dataset.ix;run(true)});
+  const {required}=splitJD($("jd").value);
+  $("status").textContent=`Required skills detected in JD: ${required.join(", ")||"none"} · ${results.length} candidates ranked`;
+  showDetail();
+}
+function showDetail(){
+  const r=results[selected],w=readWeights(),ws=Object.values(w).reduce((a,b)=>a+b,0)||1;
+  $("dname").textContent=`${r.name} — ${r.total.toFixed(1)} / 100`;
+  $("dskills").innerHTML=r.required.map(s=>`<span class="chip ${r.met.includes(s)?"ok":"miss"}">${r.met.includes(s)?"✓":"✗"} ${s}</span>`).join("");
+  $("dfactors").innerHTML=FACTORS.map(f=>{const s=r.sub[f.id];return `<div class="factor"><div class="h"><span>${f.label} <small class="mut">(weight ${(w[f.id]/ws*100).toFixed(0)}%)</small></span><span>${(s.score*100).toFixed(0)}/100 → +${(s.score*w[f.id]/ws*100).toFixed(1)}</span></div><ul>${s.ev.map(e=>`<li>${esc(e)}</li>`).join("")}</ul></div>`}).join("");
+  $("iv").style.display="none";$("iv").textContent="";
+  if(streaming){clearInterval(streaming);streaming=null}
+}
+function interviewText(r){
+  const strong=r.met.slice(0,3),gaps=r.missing.slice(0,3);
+  let t=`INTERVIEW PLAN — ${r.name}\n\n`;
+  t+=`Opening\n1. Walk me through the project you are proudest of in the last ${Math.max(1,Math.min(r.exp.years,3))} years and what you personally owned.\n\n`;
+  if(strong.length){t+=`Verify strengths (evidence found in resume)\n`;strong.forEach((s,i)=>t+=`${i+2}. You list ${s}. Describe a production decision you made with it and the trade-off you accepted.\n`);t+="\n"}
+  if(gaps.length){t+=`Probe gaps (required but not evidenced)\n`;gaps.forEach((s,i)=>t+=`${i+2+strong.length}. We rely on ${s}. How have you worked with it, or how would you ramp up in your first month?\n`);t+="\n"}
+  const imp=r.sub.impact.ev[0];
+  if(r.sub.impact.score>0)t+=`Dig into impact\n• ${imp}\n  How was this measured, and what was the baseline?\n\n`;
+  const rec=r.total>=70?"ADVANCE to technical interview":r.total>=45?"HOLD — advance only if gaps are addressed in screen call":"DO NOT ADVANCE for this role";
+  t+=`Hiring report\nScore ${r.total.toFixed(1)}/100 · Required skills ${r.met.length}/${r.required.length} · Experience ${r.exp.years} yrs\nRecommendation: ${rec}\nNote: a human makes the final decision; scores explain, they do not decide.`;
+  return t;
+}
+$("gen").onclick=()=>{
+  const out=$("iv"),text=interviewText(results[selected]);
+  out.style.display="";out.textContent="";out.classList.add("caret");
+  let i=0;if(streaming)clearInterval(streaming);
+  streaming=setInterval(()=>{i+=3;out.textContent=text.slice(0,i);if(i>=text.length){clearInterval(streaming);streaming=null;out.classList.remove("caret")}},12);
+};
+$("add").onclick=()=>{const l=readCands();l.push("New Candidate\nRole title\nExperience: 2020 - Present\n- Describe work, skills and measurable results here\nEducation: B.Sc.");renderCands(l)};
+$("run").onclick=()=>run(false);
+$("jd").value=JD_DEFAULT;renderCands(SAMPLES);renderWeights();run(false);
+</script>
+</body>
+</html>

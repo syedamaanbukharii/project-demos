@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radiology Drafting Assistant — Interactive Demo</title>
+<style>
+:root{--bg:#f5f6f9;--card:#fff;--ink:#1b2130;--mut:#667085;--line:#e3e6ee;--pri:#3a4f8a;--ok:#1a7f4b;--bad:#b42318;--warn:#b25e09}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:#27304d;color:#fff;padding:16px 20px}
+header h1{margin:0;font-size:20px}header p{margin:4px 0 0;opacity:.85;font-size:13.5px}
+.wrap{max-width:1180px;margin:0 auto;padding:14px}
+.note{background:#fff8e6;border:1px solid #f1d58a;border-radius:8px;padding:10px 12px;font-size:13px;color:#6b4e00;margin-bottom:12px}
+.warn{background:#fdecea;border:1px solid #f5c2bd;color:#7a1a12}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2{margin:0 0 6px;font-size:15px}
+textarea{width:100%;font:13.5px/1.5 ui-monospace,Consolas,monospace;border:1px solid var(--line);border-radius:8px;padding:8px;resize:vertical}
+button{font:inherit;cursor:pointer;border:1px solid var(--pri);background:var(--pri);color:#fff;border-radius:8px;padding:7px 14px}
+button.sec{background:#fff;color:var(--pri)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.sum{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 10px}
+.pill{border-radius:99px;padding:3px 12px;font-size:13px;font-weight:600;border:1px solid var(--line)}
+.pill.ok{background:#e8f6ee;color:var(--ok)}.pill.bad{background:#fdecea;color:var(--bad)}.pill.warn{background:#fff1de;color:var(--warn)}.pill.n{background:#f0f2f6;color:var(--mut)}
+.st{border:1px solid var(--line);border-left-width:5px;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:14px}
+.st.ok{border-left-color:var(--ok)}.st.bad{border-left-color:var(--bad)}.st.warn{border-left-color:var(--warn)}.st.n{border-left-color:#c8ccd6}
+.tag{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-right:6px}
+.ok .tag{color:var(--ok)}.bad .tag{color:var(--bad)}.warn .tag{color:var(--warn)}.n .tag{color:var(--mut)}
+.why{font-size:12.8px;color:var(--mut);margin-top:4px}
+.cite{font-size:12.5px;background:#f3f5fb;border-radius:6px;padding:5px 8px;margin-top:5px}
+.cite b{color:var(--pri)}
+.find{font-size:13px;margin:2px 0}
+details{margin-top:10px}summary{cursor:pointer;color:var(--pri);font-size:13.5px}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Radiology Drafting Assistant — Interactive Demo</h1>
+  <p>Drafts a report from imaging notes, then uses retrieval over reporting guidelines to flag statements the notes do not support.</p>
+</header>
+<div class="wrap">
+  <div class="note warn"><b>Research prototype · fictional data · not medical advice.</b> Nothing here should be used for clinical decisions. The guideline snippets are short paraphrased reporting conventions written for this demo.</div>
+  <div class="note"><b>About this demo:</b> runs in your browser. In the real prototype an LLM writes the draft; here a rule-based extractor + template writer stand in for it. <b>The verification logic is real</b>: findings are extracted with laterality, negation and size; every draft sentence is checked against them (supported / unsupported / contradicted / needs hedging); and BM25 retrieval over a guideline corpus attaches the most relevant citation. Edit either box and re-check.</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>1 · Imaging notes <span class="mut" style="font-weight:400">(source of truth)</span></h2>
+      <textarea id="notes" rows="10"></textarea>
+      <div class="row"><button id="gen">Generate draft from notes</button></div>
+      <details><summary>Extracted structured findings</summary><div id="finds"></div></details>
+    </div>
+    <div class="card">
+      <h2>2 · Draft report <span class="mut" style="font-weight:400">(paste any draft, e.g. an LLM’s)</span></h2>
+      <textarea id="draft" rows="10"></textarea>
+      <div class="row"><button id="check">Check draft against notes &amp; guidelines</button><button class="sec" id="sample">Load sample draft with errors</button></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px" id="resCard" hidden>
+    <h2>3 · Verification result</h2>
+    <div class="sum" id="sum"></div>
+    <div id="res"></div>
+  </div>
+</div>
+
+<script>
+/* ---------- guideline corpus (paraphrased, illustrative) ---------- */
+const GUIDE=[
+ {id:"G1",t:"Report structure",x:"A report states technique, comparison, findings and an impression. The impression should answer the clinical question and stay consistent with the findings."},
+ {id:"G2",t:"Pneumothorax",x:"For pneumothorax state presence or absence, the side and an estimate of size. Mention mediastinal shift only if it is seen. Do not report a pneumothorax that is not documented."},
+ {id:"G3",t:"Consolidation and pneumonia",x:"Describe consolidation by location and lobe and note air bronchograms. Pneumonia is a clinical diagnosis, so use hedged wording such as consolidation which may represent infection in the appropriate clinical context."},
+ {id:"G4",t:"Pleural effusion",x:"For pleural effusion state the side and grade size as small moderate or large. Blunting of the costophrenic angle supports a small effusion."},
+ {id:"G5",t:"Cardiac size",x:"Cardiomegaly is suggested when the cardiothoracic ratio exceeds 0.5 on a PA film. AP and portable films magnify the heart so state the projection when reporting heart size."},
+ {id:"G6",t:"Pulmonary nodule",x:"A pulmonary nodule report needs size in millimetres, location and margin. Follow-up advice should refer to nodule size. Do not state that nodules are absent unless this was assessed."},
+ {id:"G7",t:"Pulmonary oedema",x:"Pulmonary oedema pattern includes bilateral perihilar haze, vascular cephalisation and septal lines. Report oedema only when these features are described in the findings."},
+ {id:"G8",t:"Definitive diagnosis wording",x:"Avoid definitive diagnostic labels not directly established by imaging. Use suggests, may represent or is compatible with when the finding is nonspecific."},
+ {id:"G9",t:"Pertinent negatives",x:"Pertinent negatives such as no pneumothorax or no fracture may be stated only when the source notes document that they were assessed. Unsupported negatives give false reassurance."},
+ {id:"G10",t:"Laterality",x:"Check side carefully. Left and right must match the source notes. Laterality errors are a common drafting error and must be corrected before sign off."},
+ {id:"G11",t:"Comparison and interval change",x:"When prior imaging is available describe interval change as new, stable, improved or worse. Do not claim a change without a prior study."},
+ {id:"G12",t:"Lines and tubes",x:"Report the position of endotracheal tubes central lines and chest tubes relative to anatomical landmarks such as the carina and note any complication."},
+ {id:"G13",t:"Fractures",x:"For fractures name the bone side and level, for example the right sixth rib. Only report a fracture when it is described in the notes."},
+ {id:"G14",t:"Atelectasis and volume loss",x:"Atelectasis is volume loss with displacement of fissures or elevation of the diaphragm. Distinguish it from consolidation in the impression."}
+];
+
+/* ---------- BM25 retrieval (real) ---------- */
+const STOP=new Set("a an the and or of to in for with on at by is are be as it its this that from not no".split(" "));
+const tok=t=>t.toLowerCase().replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w&&!STOP.has(w));
+const DOCS=GUIDE.map(g=>tok(g.t+" "+g.t+" "+g.x));
+const AVG=DOCS.reduce((a,d)=>a+d.length,0)/DOCS.length;
+const DF={};DOCS.forEach(d=>new Set(d).forEach(w=>DF[w]=(DF[w]||0)+1));
+function bm25(query,k1=1.5,b=0.75){
+  const q=tok(query);
+  return GUIDE.map((g,i)=>{
+    const d=DOCS[i],tf={};d.forEach(w=>tf[w]=(tf[w]||0)+1);
+    let s=0;for(const w of new Set(q)){if(!tf[w])continue;const idf=Math.log(1+(DOCS.length-DF[w]+.5)/(DF[w]+.5));s+=idf*(tf[w]*(k1+1))/(tf[w]+k1*(1-b+b*d.length/AVG))}
+    return {g,s};
+  }).sort((a,b)=>b.s-a.s);
+}
+
+/* ---------- finding extraction (real) ---------- */
+const CONCEPTS={
+ pneumothorax:["pneumothorax","pneumothoraces"],
+ effusion:["pleural effusion","effusion"],
+ consolidation:["consolidation","airspace opacity","airspace disease"],
+ pneumonia:["pneumonia"],
+ cardiomegaly:["cardiomegaly","enlarged heart","heart is enlarged","heart size is mildly enlarged","heart size is enlarged","cardiac enlargement"],
+ nodule:["nodule","nodules"],
+ oedema:["pulmonary edema","pulmonary oedema","edema","oedema"],
+ fracture:["fracture","fractures"],
+ atelectasis:["atelectasis","collapse"],
+ widening:["mediastinal widening","widened mediastinum"]
+};
+const NEG=/\b(no|without|absent|negative for|free of|not seen|not identified|resolved|no evidence of|no definite)\b/i;
+const HEDGE=/\b(may represent|suggests?|suggestive|possible|possibly|compatible with|consistent with|likely|probable|cannot exclude|in the appropriate clinical context)\b/i;
+const SIZEW=["small","moderate","large"];
+function sentences(t){return t.split(/(?<=[.;])\s+|\n+/).map(s=>s.trim()).filter(Boolean)}
+function sideOf(s){
+  const l=/\bleft\b/i.test(s),r=/\bright\b/i.test(s);
+  if(/bilateral|both/i.test(s))return "both";
+  return l&&r?"both":l?"left":r?"right":null;
+}
+function extract(sentence){
+  const low=sentence.toLowerCase(),out=[];
+  for(const [c,alts] of Object.entries(CONCEPTS)){
+    let idx=-1;for(const a of alts){const i=low.indexOf(a);if(i>=0&&(idx<0||i<idx))idx=i}
+    if(idx<0)continue;
+    const before=low.slice(Math.max(0,idx-40),idx);
+    const negated=NEG.test(before)||(/^no\b/.test(low.trim()));
+    const sz=SIZEW.find(w=>new RegExp("\\b"+w+"\\b").test(low))||null;
+    const mm=low.match(/(\d+(?:\.\d+)?)\s*(mm|cm)/);
+    out.push({concept:c,side:sideOf(sentence),negated,size:sz,mm:mm?(mm[2]==="cm"?+mm[1]*10:+mm[1]):null,text:sentence});
+  }
+  return out;
+}
+const extractAll=t=>sentences(t).flatMap(extract);
+
+/* ---------- draft generation from notes (template NLG) ---------- */
+function generate(notes){
+  const f=extractAll(notes),pos=f.filter(x=>!x.negated),neg=f.filter(x=>x.negated);
+  const proj=/\bAP\b|portable/i.test(notes)?"AP":/\bPA\b/.test(notes)?"PA":"single";
+  const uniq=a=>[...new Set(a.map(x=>x.text))];
+  // findings reuse the notes' own wording so nothing is invented; impression leads with the positives, hedged where needed
+  const lead=x=>x.text.replace(/\.$/,"").split(/ with |, /i)[0];
+  let r=`Technique: ${proj} chest radiograph.\nComparison: none provided.\nFindings:\n`;
+  r+=[...uniq(pos),...uniq(neg)].join("\n")+"\n";
+  r+="Impression:\n";
+  const imp=pos.map(x=>x.concept==="consolidation"?`${lead(x)}, which may represent infection in the appropriate clinical context`:lead(x));
+  r+=imp.length?[...new Set(imp)].join(". ")+".":"No acute abnormality documented in the notes.";
+  return r;
+}
+
+/* ---------- verification (real) ---------- */
+function check(draft,notes){
+  const nf=extractAll(notes);
+  const sideOk=(a,b)=>!a||!b||a===b||a==="both"||b==="both";
+  return sentences(draft).map(s=>{
+    const claims=extract(s);
+    const q=bm25(s+" "+claims.map(c=>c.concept).join(" "));
+    const cite=claims.length?q[0]:null;
+    if(!claims.length)return {s,status:"n",label:"No checkable claim",why:"Heading or non-diagnostic sentence.",cite:null};
+    const issues=[],okEv=[];let worst="ok";
+    const bump=w=>{const rank={ok:0,warn:1,bad:2};if(rank[w]>rank[worst])worst=w};
+    for(const c of claims){
+      const need=c.concept==="pneumonia"?"consolidation":c.concept;
+      const same=nf.filter(f=>f.concept===need);
+      if(!same.length){
+        issues.push(c.negated?`“No ${c.concept}” is a pertinent negative, but the notes never assess it (G9).`:`${c.concept} is not mentioned anywhere in the notes.`);bump("bad");continue;
+      }
+      const posN=same.filter(f=>!f.negated),negN=same.filter(f=>f.negated);
+      if(c.negated){
+        if(posN.some(f=>sideOk(c.side,f.side))){issues.push(`Draft says no ${c.concept}, but the notes document it: “${posN[0].text}”`);bump("bad");continue}
+        okEv.push(negN[0].text);continue;
+      }
+      if(!posN.length){issues.push(`Draft reports ${c.concept}, but the notes state it is absent: “${negN[0].text}”`);bump("bad");continue}
+      const match=posN.find(f=>sideOk(c.side,f.side));
+      if(!match){issues.push(`Laterality mismatch (G10): draft says ${c.side}, notes say ${posN[0].side}: “${posN[0].text}”`);bump("bad");continue}
+      if(c.size&&match.size&&c.size!==match.size){issues.push(`Size mismatch: draft says ${c.size}, notes say ${match.size}: “${match.text}”`);bump("bad");continue}
+      if(c.mm&&match.mm&&Math.abs(c.mm-match.mm)>1){issues.push(`Measurement mismatch: draft ${c.mm} mm vs notes ${match.mm} mm.`);bump("bad");continue}
+      if(c.concept==="pneumonia"&&!HEDGE.test(s)){issues.push("Consolidation is supported, but “pneumonia” is stated as a definitive diagnosis. Hedge it (G3, G8).");bump("warn");okEv.push(match.text);continue}
+      okEv.push(match.text);
+    }
+    if(worst==="ok")return {s,status:"ok",label:"Supported",why:"Matches: “"+okEv[0]+"”",cite};
+    return {s,status:worst,label:worst==="bad"?(issues.some(i=>/mismatch|state it is absent|document it/.test(i))?"Contradicted":"Unsupported"):"Needs hedging",why:issues.join(" "),cite};
+  });
+}
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const NOTES=`Clinical question: cough and fever for 3 days.
+AP portable chest radiograph.
+Right lower lobe consolidation with air bronchograms.
+Small left pleural effusion with blunting of the costophrenic angle.
+No pneumothorax.
+Heart size is mildly enlarged, cardiothoracic ratio approximately 0.55 on AP view.
+No rib fracture.`;
+const BAD=`Technique: AP chest radiograph.
+Findings:
+Right lower lobe consolidation with air bronchograms.
+There is a large right pleural effusion.
+A small right apical pneumothorax is present.
+The heart is enlarged.
+No pulmonary nodule is seen.
+Impression:
+Right lower lobe pneumonia.
+Pulmonary edema is also present.`;
+function showFinds(){
+  const f=extractAll($("notes").value);
+  $("finds").innerHTML=f.length?f.map(x=>`<div class="find"><b>${x.negated?"NOT ":""}${x.concept}</b>${x.side?" · "+x.side:""}${x.size?" · "+x.size:""}${x.mm?" · "+x.mm+" mm":""} <span class="mut">— “${esc(x.text)}”</span></div>`).join(""):'<span class="mut">No findings recognised.</span>';
+}
+function run(){
+  const rs=check($("draft").value,$("notes").value);
+  $("resCard").hidden=false;
+  const c=k=>rs.filter(r=>r.status===k).length;
+  $("sum").innerHTML=`<span class="pill ok">${c("ok")} supported</span><span class="pill bad">${c("bad")} flagged</span><span class="pill warn">${c("warn")} needs hedging</span><span class="pill n">${c("n")} not checkable</span>`;
+  $("res").innerHTML=rs.map(r=>`<div class="st ${r.status}"><span class="tag">${r.label}</span>${esc(r.s)}<div class="why">${esc(r.why)}</div>${r.cite&&r.status!=="ok"?`<div class="cite">Guideline retrieved (BM25 ${r.cite.s.toFixed(2)}): <b>${r.cite.g.id} · ${r.cite.g.t}</b> — ${esc(r.cite.g.x)}</div>`:r.cite?`<div class="cite">Relevant guideline: <b>${r.cite.g.id} · ${r.cite.g.t}</b></div>`:""}</div>`).join("");
+}
+$("notes").value=NOTES;$("draft").value=BAD;showFinds();
+$("notes").oninput=showFinds;
+$("gen").onclick=()=>{$("draft").value=generate($("notes").value);run()};
+$("check").onclick=run;
+$("sample").onclick=()=>{$("notes").value=NOTES;$("draft").value=BAD;showFinds();run()};
+run();
+</script>
+</body>
+</html>

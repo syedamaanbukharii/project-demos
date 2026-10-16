@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Travel &amp; Coupon Agent — Interactive Demo</title>
+<style>
+:root{--bg:#f4f8f8;--card:#fff;--ink:#16282b;--mut:#5f7377;--line:#dbe6e7;--pri:#0f6b72;--pri2:#e2f2f3;--ok:#1a7f4b}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--pri);color:#fff;padding:16px 20px}
+header h1{margin:0;font-size:20px}header p{margin:4px 0 0;opacity:.88;font-size:13.5px}
+.wrap{max-width:1180px;margin:0 auto;padding:14px}
+.note{background:#fff8e6;border:1px solid #f1d58a;border-radius:8px;padding:10px 12px;font-size:13px;color:#6b4e00;margin-bottom:12px}
+.layout{display:grid;grid-template-columns:1.25fr 1fr;gap:14px}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.card h2{margin:0;padding:10px 14px;font-size:14px;border-bottom:1px solid var(--line);background:#fafcfc;display:flex;justify-content:space-between;align-items:center}
+.tabs{display:flex;gap:6px;padding:8px 14px 0;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:#fff;border-radius:99px;padding:2px 12px;font-size:13px;cursor:pointer;color:var(--mut)}
+.tab.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+#chat{height:430px;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:92%;padding:9px 12px;border-radius:12px;font-size:14.5px}
+.u{align-self:flex-end;background:var(--pri);color:#fff;border-bottom-right-radius:3px}
+.a{align-self:flex-start;background:#eef4f4;border-bottom-left-radius:3px}
+.opt{display:flex;justify-content:space-between;gap:10px;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;margin:6px 0;font-size:13.5px}
+.opt b{color:var(--pri)}
+.chips{padding:0 14px 8px;display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#fff;border-radius:99px;padding:3px 10px;font-size:12.5px;cursor:pointer;color:var(--pri)}
+.chip:hover{background:var(--pri2)}
+form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
+input[type=text]{flex:1;font:inherit;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+button{font:inherit;cursor:pointer;border:1px solid var(--pri);background:var(--pri);color:#fff;border-radius:8px;padding:7px 16px}
+#trace{height:360px;overflow:auto;padding:10px 14px;font:12.5px/1.45 ui-monospace,Consolas,monospace}
+.call{border-left:3px solid var(--pri);padding:4px 8px;margin-bottom:8px;background:#f7fbfb}
+.call .n{color:var(--pri);font-weight:700}
+.call .r{color:var(--mut);white-space:pre-wrap;word-break:break-word}
+.call.run{opacity:.6}
+#bk{padding:10px 14px;font-size:13.5px;max-height:170px;overflow:auto}
+.b{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:4px 0}
+.tag{font-size:11.5px;padding:0 7px;border-radius:99px;background:#e3f5ea;color:var(--ok)}
+.tag.c{background:#fdecea;color:#b42318}
+.mut{color:var(--mut)}
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Travel &amp; Coupon Discovery Agent — Interactive Demo</h1>
+  <p>Multi-step tool calling: search flights &amp; hotels, discover the best coupon, book and cancel — with the tool trace visible.</p>
+</header>
+<div class="wrap">
+  <div class="note"><b>About this demo:</b> runs fully in your browser with a fictional inventory. In the real agent an LLM decides which tool to call; here a rule-based intent parser stands in for the LLM, but the <b>tool layer is real code</b>: deterministic flight/hotel search, coupon eligibility and best-discount selection, booking state, and a date-based refund policy on cancellation. Every session keeps its own state, like the concurrent-session backend.</div>
+  <div class="layout">
+    <div class="card">
+      <h2><span>Conversation</span><span class="mut" style="font-weight:400;font-size:12px" id="slot"></span></h2>
+      <div class="tabs" id="tabs"></div>
+      <div id="chat"></div>
+      <div class="chips" id="chips"></div>
+      <form id="f"><input type="text" id="in" autocomplete="off" placeholder="e.g. Flights from Srinagar to Delhi tomorrow"><button>Send</button></form>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card"><h2>Tool-call trace <span class="mut" style="font-weight:400;font-size:12px">what the agent executed</span></h2><div id="trace"></div></div>
+      <div class="card"><h2>Bookings (this session)</h2><div id="bk"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- fictional inventory & deterministic helpers ---------- */
+const CITIES={srinagar:["SXR","Srinagar","IN"],delhi:["DEL","Delhi","IN"],mumbai:["BOM","Mumbai","IN"],bangalore:["BLR","Bengaluru","IN"],bengaluru:["BLR","Bengaluru","IN"],goa:["GOI","Goa","IN"],kolkata:["CCU","Kolkata","IN"],dubai:["DXB","Dubai","AE"],doha:["DOH","Doha","QA"],london:["LHR","London","GB"],berlin:["BER","Berlin","DE"]};
+const AIRLINES=["SkyJet","AeroLine","NimbusAir","Horizon Air"];
+const HOTELS=["Grand Meridian","Lakeview Residency","The Courtyard Inn","Skyline Suites","Heritage Palace","City Nest"];
+const COUPONS=[
+ {code:"FLY10",kind:"flight",pct:10,cap:1500,min:5000,desc:"10% off flights above ₹5,000 (max ₹1,500)"},
+ {code:"STAY15",kind:"hotel",pct:15,cap:3000,min:0,minNights:2,desc:"15% off stays of 2+ nights (max ₹3,000)"},
+ {code:"WELCOME500",kind:"any",flat:500,min:3000,firstOnly:true,desc:"Flat ₹500 off your first booking above ₹3,000"}
+];
+function hash(s){let h=2166136261;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return (h>>>0)}
+function rnd(seed,i){return ((hash(seed+"|"+i)%10000)/10000)}
+const inr=n=>"₹"+Math.round(n).toLocaleString("en-IN");
+const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
+const today=()=>{const d=new Date();d.setHours(0,0,0,0);return d};
+const daysUntil=s=>Math.round((new Date(s+"T00:00:00")-today())/86400000);
+const fmt=s=>new Date(s+"T00:00:00").toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"});
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ---------- tools (real logic) ---------- */
+function makeTools(S){
+  return {
+    async search_flights({origin,dest,date}){
+      const o=CITIES[origin],d=CITIES[dest];
+      const intl=o[2]!==d[2],pair=[o[0],d[0]].sort().join("-");
+      const base=(intl?18000:3200)+rnd(pair,0)*(intl?22000:5500);
+      const list=[0,1,2,3].map(i=>{
+        const h=6+Math.floor(rnd(pair+date,i+10)*15),m=[0,15,30,45][Math.floor(rnd(pair+date,i+20)*4)];
+        const dur=(intl?4:1.5)+rnd(pair,3)*(intl?5:1.2);
+        return {id:"F"+(i+1),airline:AIRLINES[i],from:o[0],to:d[0],date,depart:`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,hours:+dur.toFixed(1),price:Math.round(base*(0.85+rnd(pair+date,i+30)*0.55)/10)*10};
+      }).sort((a,b)=>a.price-b.price);
+      list.forEach((f,i)=>f.id="F"+(i+1));
+      return list;
+    },
+    async search_hotels({dest,nights,checkin}){
+      const c=CITIES[dest],intl=c[2]!=="IN";
+      const list=[0,1,2,3].map(i=>({id:"H"+(i+1),name:HOTELS[Math.floor(rnd(c[0],i)*HOTELS.length)]+" "+c[1],city:c[1],checkin,nights,rating:+(3.4+rnd(c[0],i+5)*1.5).toFixed(1),perNight:Math.round((intl?6500:2600)*(0.7+rnd(c[0],i+9)*1.4)/10)*10}));
+      list.sort((a,b)=>a.perNight-b.perNight);list.forEach((h,i)=>{h.id="H"+(i+1);h.total=h.perNight*nights});
+      return list;
+    },
+    async find_coupons({kind,subtotal,nights}){
+      return COUPONS.map(c=>{
+        let ok=true,why="eligible";
+        if(c.kind!=="any"&&c.kind!==kind){ok=false;why=`only for ${c.kind}s`}
+        else if(subtotal<c.min){ok=false;why=`needs subtotal ≥ ${inr(c.min)}`}
+        else if(c.minNights&&nights<c.minNights){ok=false;why=`needs ${c.minNights}+ nights`}
+        else if(c.firstOnly&&S.bookings.length>0){ok=false;why="first booking only"}
+        const discount=ok?(c.flat?c.flat:Math.min(c.cap,Math.round(subtotal*c.pct/100))):0;
+        return {code:c.code,desc:c.desc,eligible:ok,reason:why,discount};
+      });
+    },
+    async create_booking({item,coupon}){
+      const id="BK"+(1000+hash(S.id+S.bookings.length+item.id)%9000);
+      const subtotal=item.total??item.price;
+      const paid=subtotal-(coupon?coupon.discount:0);
+      const b={id,type:item.id[0]==="F"?"flight":"hotel",label:item.id[0]==="F"?`${item.airline} ${item.from}→${item.to}`:item.name,date:item.date||item.checkin,subtotal,coupon:coupon?coupon.code:null,paid,status:"CONFIRMED"};
+      S.bookings.push(b);return b;
+    },
+    async cancel_booking({id}){
+      const b=S.bookings.find(x=>x.id===id.toUpperCase());
+      if(!b)return {error:`No booking ${id} in this session`};
+      if(b.status==="CANCELLED")return {error:`${b.id} is already cancelled`};
+      const d=daysUntil(b.date),pct=d>=2?100:d>=0?50:0;
+      b.status="CANCELLED";b.refund=Math.round(b.paid*pct/100);
+      return {id:b.id,daysBeforeTravel:d,refundPercent:pct,refund:b.refund};
+    }
+  };
+}
+
+/* ---------- intent parsing (stands in for the LLM) ---------- */
+function findCities(t){
+  const hits=[];
+  for(const k of Object.keys(CITIES)){const i=t.search(new RegExp("\\b"+k+"\\b"));if(i>=0)hits.push([i,k])}
+  return hits.sort((a,b)=>a[0]-b[0]).map(h=>h[1]);
+}
+function parseDate(t){
+  let m;
+  if((m=t.match(/(20\d\d-\d\d-\d\d)/)))return m[1];
+  if(/\bday after tomorrow\b/.test(t))return iso(addDays(today(),2));
+  if(/\btomorrow\b/.test(t))return iso(addDays(today(),1));
+  if(/\btoday\b/.test(t))return iso(today());
+  if((m=t.match(/in (\d+) days?/)))return iso(addDays(today(),+m[1]));
+  if(/next week/.test(t))return iso(addDays(today(),7));
+  const days=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+  for(let i=0;i<7;i++)if(t.includes(days[i])){let n=(i-today().getDay()+7)%7||7;return iso(addDays(today(),n))}
+  const mons=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+  if((m=t.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/))){
+    let d=new Date(today().getFullYear(),mons.indexOf(m[2]),+m[1]);if(d<today())d.setFullYear(d.getFullYear()+1);return iso(d);
+  }
+  return null;
+}
+function parseNights(t){const m=t.match(/(\d+)\s*(?:night|day)s?/);return m?Math.min(14,+m[1]):null}
+
+/* ---------- agent ---------- */
+const sessions=[];let cur=0;
+function newSession(){
+  const S={id:"S"+(sessions.length+1),chat:[],trace:[],bookings:[],slots:{},lastFlights:[],lastHotels:[],pending:null,busy:false};
+  S.tools=makeTools(S);sessions.push(S);
+  S.chat.push({r:"a",h:"Hi! I can search <b>flights</b> and <b>hotels</b>, find the <b>best coupon</b>, <b>book</b> and <b>cancel</b>. Try a suggestion below."});
+  return S;
+}
+async function callTool(S,name,args){
+  const entry={name,args,res:null,ms:0};S.trace.push(entry);render();
+  const t0=performance.now();await wait(260+Math.random()*180);
+  entry.res=await S.tools[name](args);entry.ms=Math.round(performance.now()-t0);render();
+  return entry.res;
+}
+const flightHTML=f=>`<div class="opt"><span><b>${f.id}</b> ${f.airline} · ${f.from}→${f.to}<br><small class="mut">${fmt(f.date)} · dep ${f.depart} · ${f.hours}h</small></span><b>${inr(f.price)}</b></div>`;
+const hotelHTML=h=>`<div class="opt"><span><b>${h.id}</b> ${h.name}<br><small class="mut">${h.rating}★ · ${h.nights} night(s) from ${fmt(h.checkin)} · ${inr(h.perNight)}/night</small></span><b>${inr(h.total)}</b></div>`;
+
+async function handle(S,text){
+  const t=text.toLowerCase().trim(),sl=S.slots;
+  const cities=findCities(t),date=parseDate(t),nights=parseNights(t);
+  const wantF=/flight|fly|ticket/.test(t),wantH=/hotel|stay|room/.test(t);
+  let m;
+
+  if(/^(hi|hello|hey)\b/.test(t))return "Hello! Tell me where you want to go, e.g. <i>“Flights from Srinagar to Delhi tomorrow”</i>.";
+  if(/my booking|bookings|show booking/.test(t))
+    return S.bookings.length?"Your bookings:"+S.bookings.map(b=>`<div class="opt"><span><b>${b.id}</b> ${b.label}<br><small class="mut">${fmt(b.date)} · ${b.status}${b.coupon?" · coupon "+b.coupon:""}</small></span><b>${inr(b.paid)}</b></div>`).join(""):"You have no bookings yet in this session.";
+
+  if(/cancel/.test(t)){
+    const idm=t.match(/bk\d{4}/i)||(S.bookings.filter(b=>b.status==="CONFIRMED").length===1?[S.bookings.find(b=>b.status==="CONFIRMED").id]:null);
+    if(!idm)return S.bookings.length?"Which booking should I cancel? Give me the ID, e.g. <b>cancel "+S.bookings[0].id+"</b>.":"There is nothing to cancel yet.";
+    const r=await callTool(S,"cancel_booking",{id:idm[0]});
+    if(r.error)return "⚠️ "+r.error;
+    return `Cancelled <b>${r.id}</b>. It was ${r.daysBeforeTravel} day(s) before travel, so the refund policy gives <b>${r.refundPercent}%</b> back: <b>${inr(r.refund)}</b>.<br><small class="mut">Policy: ≥2 days before = 100%, 0–1 days = 50%, after = 0%.</small>`;
+  }
+
+  if(/\bcoupon|discount|offer|promo|deal/.test(t)&&!/book/.test(t)){
+    const ctx=S.lastHotels.length&&!S.lastFlights.length?{kind:"hotel",item:S.lastHotels[0]}:S.lastFlights.length?{kind:"flight",item:S.lastFlights[0]}:null;
+    if(!ctx){
+      return "Coupons currently running:"+COUPONS.map(c=>`<div class="opt"><span><b>${c.code}</b><br><small class="mut">${c.desc}</small></span></div>`).join("")+"Search a flight or hotel and I'll check which ones apply to your trip.";
+    }
+    const sub=ctx.item.total??ctx.item.price;
+    const cs=await callTool(S,"find_coupons",{kind:ctx.kind,subtotal:sub,nights:ctx.item.nights||0});
+    const best=cs.filter(c=>c.eligible).sort((a,b)=>b.discount-a.discount)[0];
+    return `For your top ${ctx.kind} option (${inr(sub)}):`+cs.map(c=>`<div class="opt"><span><b>${c.code}</b> ${c.eligible?'<span class="tag">eligible</span>':'<span class="tag c">not eligible</span>'}<br><small class="mut">${c.eligible?c.desc:c.reason}</small></span><b>${c.eligible?"−"+inr(c.discount):""}</b></div>`).join("")+(best?`Best: <b>${best.code}</b> saves ${inr(best.discount)}. It is applied automatically when you book.`:"No coupon applies to this one.");
+  }
+
+  if(/\bbook\b|reserve|confirm|\byes\b/.test(t)){
+    let item=null;
+    if(S.pending&&/\byes\b|confirm/.test(t))item=S.pending;
+    else{
+      const idm=t.match(/\b([fh])\s?(\d)\b/),optm=t.match(/option\s?(\d)/);
+      const hotelCtx=/hotel|stay/.test(t)||(!S.lastFlights.length&&S.lastHotels.length);
+      const pool=hotelCtx?S.lastHotels:S.lastFlights;
+      if(!pool.length&&!S.lastFlights.length&&!S.lastHotels.length)return "Search first — e.g. <i>“Flights from Srinagar to Delhi tomorrow”</i> — then tell me which one to book.";
+      if(idm)item=[...S.lastFlights,...S.lastHotels].find(x=>x.id===(idm[1]+idm[2]).toUpperCase());
+      else if(optm)item=pool[+optm[1]-1];
+      else item=pool[0];   // default: cheapest (lists are sorted by price)
+      if(!item)return "I couldn't find that option. Pick one by its ID, like <b>F2</b> or <b>H1</b>.";
+    }
+    const sub=item.total??item.price;
+    const cs=await callTool(S,"find_coupons",{kind:item.id[0]==="F"?"flight":"hotel",subtotal:sub,nights:item.nights||0});
+    const best=cs.filter(c=>c.eligible).sort((a,b)=>b.discount-a.discount)[0]||null;
+    const b=await callTool(S,"create_booking",{item,coupon:best});
+    S.pending=null;
+    return `✅ Booked <b>${b.id}</b> — ${b.label} on ${fmt(b.date)}.<br>Subtotal ${inr(b.subtotal)}${best?` · coupon <b>${best.code}</b> −${inr(best.discount)}`:" · no coupon applicable"} · <b>Total ${inr(b.paid)}</b>.<br><small class="mut">Say “cancel ${b.id}” to cancel.</small>`;
+  }
+
+  if(wantF||wantH||cities.length||date||nights){
+    // slot filling across turns
+    if(cities.length>=2){sl.origin=cities[0];sl.dest=cities[1]}
+    else if(cities.length===1){ if(/from/.test(t)&&!/to\s/.test(t))sl.origin=cities[0]; else sl.dest=cities[0] }
+    if(date)sl.date=date;if(nights)sl.nights=nights;
+    const flightsIntent=wantF||(!wantH&&sl.origin);
+    if(wantH&&!wantF){
+      if(!sl.dest)return "Which city do you need a hotel in?";
+      const ci=sl.date||iso(addDays(today(),1)),n=sl.nights||2;
+      const hs=await callTool(S,"search_hotels",{dest:sl.dest,nights:n,checkin:ci});
+      S.lastHotels=hs;S.lastFlights=[];
+      return `Hotels in <b>${CITIES[sl.dest][1]}</b> for ${n} night(s) from ${fmt(ci)} (cheapest first):`+hs.map(hotelHTML).join("")+"Say <i>“book the cheapest hotel”</i>, <i>“book H2”</i> or <i>“any coupons?”</i>.";
+    }
+    if(flightsIntent){
+      if(!sl.origin&&!sl.dest)return "Where are you flying from and to?";
+      if(!sl.origin)return `Flying to <b>${CITIES[sl.dest][1]}</b> — where from?`;
+      if(!sl.dest)return `Flying from <b>${CITIES[sl.origin][1]}</b> — where to?`;
+      if(sl.origin===sl.dest)return "Origin and destination are the same — pick two different cities.";
+      if(!sl.date)return `Got it, ${CITIES[sl.origin][1]} → ${CITIES[sl.dest][1]}. Which date? (e.g. “tomorrow”, “next friday”, “15 nov”)`;
+      if(daysUntil(sl.date)<0)return "That date has passed — give me a future date.";
+      const fs=await callTool(S,"search_flights",{origin:sl.origin,dest:sl.dest,date:sl.date});
+      S.lastFlights=fs;S.lastHotels=[];
+      return `Flights <b>${CITIES[sl.origin][1]} → ${CITIES[sl.dest][1]}</b> on ${fmt(sl.date)} (cheapest first):`+fs.map(flightHTML).join("")+"Say <i>“book the cheapest flight”</i>, <i>“book F2”</i>, <i>“any coupons?”</i> or ask for hotels in "+CITIES[sl.dest][1]+".";
+    }
+  }
+  return "I can help with flights, hotels, coupons, booking and cancellation. Try: <i>“Flights from Delhi to Dubai on 20 nov”</i>.";
+}
+
+/* ---------- UI ---------- */
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function render(){
+  const S=sessions[cur];
+  $("tabs").innerHTML=sessions.map((s,i)=>`<span class="tab ${i===cur?"on":""}" data-i="${i}">Session ${i+1}</span>`).join("")+`<span class="tab" id="addS">+ new session</span>`;
+  document.querySelectorAll(".tab[data-i]").forEach(el=>el.onclick=()=>{cur=+el.dataset.i;render()});
+  $("addS").onclick=()=>{newSession();cur=sessions.length-1;render()};
+  $("chat").innerHTML=S.chat.map(m=>`<div class="msg ${m.r}">${m.r==="u"?esc(m.h):m.h}</div>`).join("")+(S.busy?'<div class="msg a mut">thinking…</div>':"");
+  $("chat").scrollTop=1e9;
+  $("trace").innerHTML=S.trace.length?S.trace.map(c=>`<div class="call ${c.res===null?"run":""}"><span class="n">${c.name}</span>(${esc(JSON.stringify(c.args).slice(0,160))})<div class="r">${c.res===null?"running…":esc(JSON.stringify(c.res,null,1).slice(0,420))+`\n⏱ ${c.ms} ms`}</div></div>`).join(""):'<span class="mut">No tool calls yet. Ask the agent something.</span>';
+  $("trace").scrollTop=1e9;
+  $("bk").innerHTML=S.bookings.length?S.bookings.map(b=>`<div class="b"><span><b>${b.id}</b> ${b.label}</span><span><span class="tag ${b.status==="CANCELLED"?"c":""}">${b.status}</span> ${b.status==="CANCELLED"?"refund "+inr(b.refund):inr(b.paid)}</span></div>`).join(""):'<span class="mut">None yet.</span>';
+  const sl=S.slots;$("slot").textContent=[sl.origin&&CITIES[sl.origin][0],sl.dest&&"→ "+CITIES[sl.dest][0],sl.date&&fmt(sl.date)].filter(Boolean).join(" ")||"no trip context";
+}
+async function send(text){
+  const S=sessions[cur];if(!text.trim()||S.busy)return;
+  S.chat.push({r:"u",h:text});S.busy=true;render();
+  try{S.chat.push({r:"a",h:await handle(S,text)})}catch(e){S.chat.push({r:"a",h:"Something went wrong: "+esc(String(e))})}
+  S.busy=false;render();
+}
+$("f").onsubmit=e=>{e.preventDefault();const v=$("in").value;$("in").value="";send(v)};
+const SUG=["Flights from Srinagar to Delhi tomorrow","Hotels in Dubai for 3 nights","Any coupons?","Book the cheapest flight","My bookings","Cancel my booking"];
+$("chips").innerHTML=SUG.map(s=>`<span class="chip">${s}</span>`).join("");
+document.querySelectorAll(".chip").forEach(c=>c.onclick=()=>send(c.textContent));
+newSession();render();
+</script>
+</body>
+</html>

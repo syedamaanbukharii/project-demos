@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enterprise GenAI Platform — Interactive Demo</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#1b2430;--mut:#667085;--line:#e3e7ee;--pri:#5b3fd0;--pri2:#eeeafc;--ok:#1a7f4b;--bad:#b42318}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--pri);color:#fff;padding:16px 20px}
+header h1{margin:0;font-size:20px}header p{margin:4px 0 0;opacity:.88;font-size:13.5px}
+.wrap{max-width:1100px;margin:0 auto;padding:14px}
+.note{background:#fff8e6;border:1px solid #f1d58a;border-radius:8px;padding:10px 12px;font-size:13px;color:#6b4e00;margin-bottom:12px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tab{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 14px;cursor:pointer;font-size:14px;color:var(--mut)}
+.tab.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.card h2{margin:0 0 6px;font-size:15px}
+textarea,input[type=text],select{width:100%;font:14px/1.45 system-ui,sans-serif;border:1px solid var(--line);border-radius:8px;padding:8px;background:#fcfcfd;color:var(--ink)}
+textarea{font-family:ui-monospace,Consolas,monospace;font-size:13px;resize:vertical}
+button{font:inherit;cursor:pointer;border:1px solid var(--pri);background:var(--pri);color:#fff;border-radius:8px;padding:7px 14px}
+button.sec{background:#fff;color:var(--pri)}button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:820px){.g2{grid-template-columns:1fr}}
+.met{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.m{background:var(--pri2);border-radius:8px;padding:6px 12px;font-size:13px}.m b{display:block;font-size:17px;color:var(--pri)}
+.out{white-space:pre-wrap;background:#fcfcfd;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:70px;margin-top:8px;font-size:14.5px}
+.caret::after{content:"▍";animation:b 1s steps(1) infinite}@keyframes b{50%{opacity:0}}
+table{width:100%;border-collapse:collapse;font-size:13.5px}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;text-transform:uppercase;color:var(--mut)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;min-width:60px}.bar i{display:block;height:100%;background:var(--pri);transition:width .2s}
+.s-done{color:var(--ok);font-weight:600}.s-run{color:var(--pri)}.s-retry{color:#b25e09}.s-fail{color:var(--bad);font-weight:600}
+.chunk{border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin:6px 0;font-size:13.5px}.chunk small{color:var(--mut)}
+.chunk.used{border-color:var(--pri);background:var(--pri2)}
+.flow{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.node{padding:5px 12px;border-radius:99px;border:1px solid var(--line);font-size:13px;color:var(--mut);background:#fff}
+.node.on{background:var(--pri);color:#fff;border-color:var(--pri)}.node.done{border-color:var(--ok);color:var(--ok)}
+.step{border-left:3px solid var(--pri);padding:4px 10px;margin:6px 0;font-size:13.5px;background:#faf9fe}
+.step b{color:var(--pri)}.step.warn{border-left-color:#b25e09;background:#fff8ee}.step.warn b{color:#b25e09}
+.mut{color:var(--mut);font-size:13px}.pane{display:none}.pane.on{display:block}
+label{font-size:13px;color:var(--mut)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Enterprise GenAI Platform — Interactive Demo</h1>
+  <p>Streaming &amp; batch inference, a RAG pipeline and multi-agent workflows behind one dashboard.</p>
+</header>
+<div class="wrap">
+  <div class="note"><b>About this demo:</b> it runs in your browser with a <b>simulated model</b> (no API calls, nothing leaves your machine). The platform mechanics are real code: token streaming with cancel and latency metrics, a concurrency-limited batch queue with retries and exponential backoff, sentence-window chunking + BM25 retrieval with a groundedness threshold, and a multi-agent graph (Planner → Researcher → Writer → Critic) with a conditional revision loop.</div>
+  <div class="tabs" id="tabs"></div>
+
+  <!-- STREAMING -->
+  <div class="pane" id="p-stream">
+    <div class="card"><h2>Streaming inference</h2>
+      <div class="g2"><div><label>Model</label><select id="model"><option value="fast">fast-small (≈ 40 tok/s)</option><option value="acc" selected>accurate-large (≈ 18 tok/s)</option></select></div>
+      <div><label>Prompt</label><input type="text" id="prompt" value="Explain what RAG is and why it reduces hallucination"></div></div>
+      <div class="row"><button id="sgo">Stream</button><button class="sec" id="sstop" disabled>Stop</button></div>
+      <div class="met"><div class="m"><b id="m-ttft">–</b>time to first token</div><div class="m"><b id="m-tps">–</b>tokens / sec</div><div class="m"><b id="m-n">–</b>tokens</div><div class="m"><b id="m-st">idle</b>status</div></div>
+      <div class="out" id="sout"></div></div>
+  </div>
+
+  <!-- BATCH -->
+  <div class="pane" id="p-batch">
+    <div class="card"><h2>Batch inference</h2>
+      <label>Prompts (one per line)</label>
+      <textarea id="bprompts" rows="6">Summarise the Q3 incident report
+Classify this ticket: VPN keeps disconnecting
+Extract the invoice number from: INV-20931 dated 4 Oct
+Translate to French: the release is delayed
+Draft a reply to a customer asking for a refund
+Tag the sentiment: the new dashboard is fantastic
+Summarise the security policy changes
+Generate 3 test cases for the login form</textarea>
+      <div class="row"><label>Concurrency: <b id="cv">3</b></label><input type="range" id="conc" min="1" max="8" value="3" style="width:160px">
+        <label><input type="checkbox" id="fail" checked> inject transient failures (30%)</label>
+        <button id="bgo">Run batch</button></div>
+      <div class="met"><div class="m"><b id="b-done">0/0</b>completed</div><div class="m"><b id="b-time">–</b>wall time</div><div class="m"><b id="b-thr">–</b>jobs / sec</div><div class="m"><b id="b-ret">0</b>retries</div></div>
+      <table style="margin-top:10px"><thead><tr><th>#</th><th>Prompt</th><th>Status</th><th>Attempts</th><th>Result</th></tr></thead><tbody id="btable"></tbody></table>
+      <div class="mut" style="margin-top:6px">Try concurrency 1 vs 8 and compare wall time. Failed calls retry with exponential backoff (200 ms, 400 ms, …) up to 3 attempts.</div></div>
+  </div>
+
+  <!-- RAG -->
+  <div class="pane" id="p-rag">
+    <div class="card"><h2>Knowledge base <span class="mut">(editable — re-indexed on every query)</span></h2><div id="kb"></div></div>
+    <div class="card"><h2>RAG pipeline</h2>
+      <input type="text" id="rq" value="How many days of annual leave do employees get?">
+      <div class="row"><label>Window (sentences): <b id="wv">2</b></label><input type="range" id="win" min="1" max="3" value="2" style="width:110px">
+        <label>Top-k: <b id="kv">3</b></label><input type="range" id="topk" min="1" max="5" value="3" style="width:110px">
+        <label>Min score: <b id="tv">1.0</b></label><input type="range" id="thr" min="0" max="40" value="10" style="width:110px">
+        <button id="rgo">Ask</button></div>
+      <div class="mut" id="rinfo"></div>
+      <div class="out" id="rans" style="min-height:40px"></div>
+      <div id="rchunks"></div></div>
+  </div>
+
+  <!-- AGENTS -->
+  <div class="pane" id="p-agents">
+    <div class="card"><h2>Multi-agent workflow</h2>
+      <input type="text" id="aq" value="What is the leave carry-over rule and how are production releases rolled back?">
+      <div class="row"><button id="ago">Run workflow</button><span class="mut">Uses the knowledge base from the RAG tab.</span></div>
+      <div class="flow" id="flow"></div>
+      <div id="steps"></div>
+      <div class="out" id="afinal" style="display:none"></div></div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+function hash(s){let h=2166136261;for(const c of s){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0}
+
+/* tabs */
+const TABS=[["stream","Streaming"],["batch","Batch"],["rag","RAG"],["agents","Multi-agent"]];
+$("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab" data-k="${k}">${l}</div>`).join("");
+function show(k){document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.k===k));document.querySelectorAll(".pane").forEach(p=>p.classList.toggle("on",p.id==="p-"+k))}
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>show(t.dataset.k));show("stream");
+
+/* ---------- simulated model ---------- */
+const ANSWERS=[
+ [/rag|retrieval/i,"Retrieval-Augmented Generation (RAG) gives a language model relevant passages from your own documents at question time. Because the model answers from retrieved evidence instead of memory alone, claims can be traced to a source and unsupported answers can be refused, which reduces hallucination."],
+ [/kubernetes|k8s|deploy/i,"A safe deployment rolls out gradually, watches error rate and latency, and rolls back automatically when a threshold is crossed. Canary releases and automated rollbacks limit the blast radius of a bad change."],
+ [/python|code|test/i,"Start with the behaviour you need to protect, write small focused tests for it, and keep side effects behind interfaces so they can be replaced in tests. Run the suite in CI before every release."],
+ [/summar/i,"Summary: the main points are condensed into a few sentences, keeping decisions, owners and dates, and dropping background detail."],
+ [/translate/i,"Traduction : la version est retardée."],
+ [/sentiment/i,"Sentiment: positive (confidence 0.94)."],
+ [/classif|ticket/i,"Category: Network / VPN · Priority: P3 · Suggested queue: Infrastructure support."],
+ [/invoice|extract/i,'{"invoice_number": "INV-20931", "date": "4 Oct"}'],
+ [/refund|reply|draft/i,"Thank you for reaching out. I'm sorry for the trouble. I have started your refund and you should see it within 5 to 7 business days."]
+];
+function fakeLLM(p){const m=ANSWERS.find(([re])=>re.test(p));return m?m[1]:`Here is a concise response to: "${p.slice(0,80)}". The platform routes this request to the selected model and returns the result with usage metrics.`}
+
+/* ---------- streaming ---------- */
+let streamAbort=null;
+$("sgo").onclick=async()=>{
+  const speed=$("model").value==="fast"?40:18,text=fakeLLM($("prompt").value),toks=text.match(/\S+\s*/g);
+  const ctl={stop:false};streamAbort=ctl;
+  $("sgo").disabled=true;$("sstop").disabled=false;$("sout").textContent="";$("sout").classList.add("caret");
+  $("m-st").textContent="streaming";$("m-ttft").textContent="–";$("m-tps").textContent="–";$("m-n").textContent="0";
+  const t0=performance.now();await wait(350+(speed<20?300:0));
+  const first=performance.now()-t0;$("m-ttft").textContent=Math.round(first)+" ms";
+  let n=0,t1=performance.now();
+  for(const t of toks){
+    if(ctl.stop)break;
+    $("sout").textContent+=t;n++;$("m-n").textContent=n;
+    $("m-tps").textContent=(n/((performance.now()-t1)/1000)).toFixed(1);
+    await wait(1000/speed);
+  }
+  $("sout").classList.remove("caret");$("m-st").textContent=ctl.stop?"cancelled":"done";
+  $("sgo").disabled=false;$("sstop").disabled=true;
+};
+$("sstop").onclick=()=>{if(streamAbort)streamAbort.stop=true};
+
+/* ---------- batch ---------- */
+$("conc").oninput=e=>$("cv").textContent=e.target.value;
+async function callModel(prompt,attempt,inject){
+  await wait(250+(hash(prompt)%400)+prompt.length*4);
+  if(inject&&attempt<2&&hash(prompt+attempt)%100<30)throw new Error("503 transient");
+  return fakeLLM(prompt);
+}
+$("bgo").onclick=async()=>{
+  const prompts=$("bprompts").value.split("\n").map(s=>s.trim()).filter(Boolean);if(!prompts.length)return;
+  const conc=+$("conc").value,inject=$("fail").checked;
+  const jobs=prompts.map((p,i)=>({i,p,st:"queued",att:0,res:""}));let retries=0,done=0;
+  const draw=()=>{
+    $("btable").innerHTML=jobs.map(j=>`<tr><td>${j.i+1}</td><td>${esc(j.p)}</td><td class="${j.st==="done"?"s-done":j.st==="failed"?"s-fail":j.st==="retrying"?"s-retry":"s-run"}">${j.st}</td><td>${j.att}</td><td class="mut">${esc(j.res.slice(0,70))}</td></tr>`).join("");
+    $("b-done").textContent=done+"/"+jobs.length;$("b-ret").textContent=retries;
+  };
+  $("bgo").disabled=true;draw();const t0=performance.now();let next=0;
+  async function worker(){
+    while(next<jobs.length){
+      const j=jobs[next++];
+      for(let a=0;a<3;a++){
+        j.att=a+1;j.st=a?"retrying":"running";draw();
+        try{j.res=await callModel(j.p,a,inject);j.st="done";break}
+        catch(e){retries++;j.st="retrying";j.res=String(e.message);draw();await wait(200*2**a);if(a===2){j.st="failed"}}
+      }
+      done++;draw();
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(conc,jobs.length)},worker));
+  const s=(performance.now()-t0)/1000;$("b-time").textContent=s.toFixed(1)+" s";$("b-thr").textContent=(jobs.length/s).toFixed(2);$("bgo").disabled=false;draw();
+};
+
+/* ---------- RAG (chunk + BM25 + groundedness gate) ---------- */
+const KB_DEFAULT=[
+ ["Leave policy","Employees receive 24 days of paid annual leave per year. Unused leave up to 5 days can be carried over to the next year. Leave requests must be submitted at least 2 weeks in advance through the HR portal. Sick leave requires a medical certificate after 3 consecutive days."],
+ ["Security policy","All laptops must use full-disk encryption. Passwords must be at least 14 characters and rotated every 180 days. Multi-factor authentication is mandatory for all production systems. Security incidents must be reported to the security team within 1 hour."],
+ ["Deployment runbook","Production deployments run through GitHub Actions after all tests pass. Releases are rolled out with a canary at 10 percent of traffic for 15 minutes. If the error rate exceeds 2 percent the release is rolled back automatically. Every deployment requires one approved code review."]
+];
+$("kb").innerHTML=KB_DEFAULT.map((d,i)=>`<div style="margin-bottom:8px"><label>${d[0]}</label><textarea rows="3" data-kb="${i}">${d[1]}</textarea></div>`).join("");
+const STOP=new Set("a an the and or of to in for with on at by is are be as it its this that from not no do does how what many much when who which can i we you".split(" "));
+const tok=t=>t.toLowerCase().replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>1&&!STOP.has(w)).map(w=>w.replace(/(ing|ed|es|s)$/,""));
+const sents=t=>t.split(/(?<=[.!?])\s+/).filter(Boolean);
+function buildIndex(win){
+  const chunks=[];
+  document.querySelectorAll("[data-kb]").forEach(el=>{
+    const title=KB_DEFAULT[+el.dataset.kb][0],ss=sents(el.value);
+    for(let i=0;i<ss.length;i+=Math.max(1,win-(win>1?1:0))){const part=ss.slice(i,i+win);if(part.length){chunks.push({id:`${title}#${chunks.filter(c=>c.doc===title).length+1}`,doc:title,sents:part,text:part.join(" ")})}if(i+win>=ss.length)break}
+  });
+  chunks.forEach(c=>c.tk=tok(c.text));
+  return chunks;
+}
+function retrieve(query,chunks,k,thr){
+  const N=chunks.length,avg=chunks.reduce((a,c)=>a+c.tk.length,0)/N,df={};
+  chunks.forEach(c=>new Set(c.tk).forEach(w=>df[w]=(df[w]||0)+1));
+  const q=[...new Set(tok(query))];
+  const scored=chunks.map(c=>{const tf={};c.tk.forEach(w=>tf[w]=(tf[w]||0)+1);let s=0;
+    for(const w of q){if(!tf[w])continue;const idf=Math.log(1+(N-df[w]+.5)/(df[w]+.5));s+=idf*(tf[w]*2.5)/(tf[w]+1.5*(.25+.75*c.tk.length/avg))}
+    return {c,s}}).sort((a,b)=>b.s-a.s);
+  return {all:scored,hits:scored.filter(x=>x.s>=thr).slice(0,k),q};
+}
+function bestSentence(chunk,q){
+  let best=null,bs=0;for(const s of chunk.sents){const t=new Set(tok(s));const sc=q.filter(w=>t.has(w)).length;if(sc>bs){bs=sc;best=s}}return best;
+}
+function askKB(query,{win,k,thr}){
+  const chunks=buildIndex(win),r=retrieve(query,chunks,k,thr);
+  return {chunks,...r};
+}
+["win","topk","thr"].forEach(id=>$(id).oninput=()=>{$("wv").textContent=$("win").value;$("kv").textContent=$("topk").value;$("tv").textContent=($("thr").value/10).toFixed(1)});
+$("rgo").onclick=()=>{
+  const p={win:+$("win").value,k:+$("topk").value,thr:$("thr").value/10};
+  const r=askKB($("rq").value,p);
+  $("rinfo").textContent=`Indexed ${r.chunks.length} chunks (window ${p.win}) · query terms: ${r.q.join(", ")||"none"}`;
+  if(!r.hits.length){
+    $("rans").textContent="I can't find this in the knowledge base, so I won't guess. (Best retrieval score "+(r.all[0]?r.all[0].s.toFixed(1):"0")+" is below the minimum "+p.thr.toFixed(1)+".)";
+  }else{
+    // answer only from hits that score close to the best one, so loosely related chunks are retrieved (shown below) but not quoted
+    const seen=new Set(),lines=[],top=r.hits[0].s;
+    r.hits.forEach((h,i)=>{if(h.s<0.6*top)return;const s=bestSentence(h.c,r.q);if(s&&!seen.has(s)){seen.add(s);lines.push(`${s} [${i+1}]`)}});
+    $("rans").textContent=lines.join(" ");
+  }
+  $("rchunks").innerHTML=r.all.slice(0,Math.max(p.k,3)).map((x,i)=>`<div class="chunk ${r.hits.includes(x)?"used":""}"><small>${r.hits.includes(x)?`[${r.hits.indexOf(x)+1}] used`:"below threshold / not selected"} · score ${x.s.toFixed(2)} · ${esc(x.c.id)}</small><br>${esc(x.c.text)}</div>`).join("");
+};
+
+/* ---------- multi-agent workflow ---------- */
+const NODES=["Planner","Researcher","Writer","Critic"];
+function drawFlow(on,done){$("flow").innerHTML=NODES.map(n=>`<span class="node ${n===on?"on":done.includes(n)?"done":""}">${n}</span>`).join("→")}
+$("ago").onclick=async()=>{
+  $("ago").disabled=true;$("steps").innerHTML="";$("afinal").style.display="none";
+  const log=(who,msg,warn)=>{$("steps").insertAdjacentHTML("beforeend",`<div class="step ${warn?"warn":""}"><b>${who}</b> ${msg}</div>`)};
+  const done=[];const win=2,k=2;let thr=1.0;
+  // Planner
+  drawFlow("Planner",done);await wait(500);
+  const q=$("aq").value.trim();
+  const subs=q.replace(/\?$/,"").split(/\band\b|;|\?/i).map(s=>s.trim()).filter(s=>s.length>3);
+  log("Planner",`split the task into ${subs.length} sub-question(s):<br>${subs.map((s,i)=>`${i+1}. ${esc(s)}`).join("<br>")}`);done.push("Planner");
+  let evidence=[],revisions=0,draft="",gaps=[];
+  const research=async relaxed=>{
+    drawFlow("Researcher",done);await wait(500);
+    const t=relaxed?thr/2:thr;evidence=[];
+    for(const s of subs){const r=askKB(s,{win,k,thr:t});const top=r.hits[0];
+      evidence.push({s,hit:top?{sent:bestSentence(top.c,r.q)||top.c.text,id:top.c.id,score:top.s}:null});
+      log("Researcher",`“${esc(s)}” → ${top?`found in <i>${esc(top.c.id)}</i> (score ${top.s.toFixed(1)})`:`no chunk above threshold ${t.toFixed(1)}`}`,!top)}
+    if(!done.includes("Researcher"))done.push("Researcher");
+  };
+  const write=async()=>{
+    drawFlow("Writer",done);await wait(500);
+    draft=evidence.map(e=>e.hit?`${e.hit.sent} [${e.hit.id}]`:`(no supporting evidence found for: ${e.s})`).join("\n");
+    log("Writer",`drafted ${evidence.length} line(s), citing sources where evidence exists.`);if(!done.includes("Writer"))done.push("Writer");
+  };
+  const critic=async()=>{
+    drawFlow("Critic",done);await wait(500);
+    gaps=evidence.filter(e=>!e.hit);
+    return gaps.length;
+  };
+  await research(false);await write();
+  let nGaps=await critic();
+  if(nGaps&&revisions<1){
+    log("Critic",`${nGaps} sub-question(s) have no cited evidence. <b>Conditional edge → back to Researcher</b> with a relaxed threshold (revision ${++revisions}/1).`,true);
+    await research(true);await write();nGaps=await critic();
+  }
+  log("Critic",nGaps?`still ${nGaps} unsupported — finalising with an explicit gap note instead of guessing.`:"every line has a cited source — approved.",!!nGaps);
+  done.push("Critic");drawFlow(null,done);
+  $("afinal").style.display="";$("afinal").textContent=draft;
+  $("ago").disabled=false;
+};
+drawFlow(null,[]);
+</script>
+</body>
+</html>
